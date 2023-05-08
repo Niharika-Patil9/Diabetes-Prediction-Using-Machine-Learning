@@ -1,0 +1,339 @@
+---
+title: "632 Project"
+author: " Rahman Baluch, Niharika Patil,Mohammed Abdul Saqhlain Shaik"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+## Data Understanding
+```{r}
+library(GGally)
+library(readr)
+library(tidyverse)
+# Load Data
+dd3 <-  read.csv("diabetes2.csv")
+View(dd3)
+
+#Scatter plots
+pairs(Outcome ~ ., data = dd3)
+
+#Histograms
+par(mfrow = c(3,3))
+for (i in 1:9){
+  hist(dd3[,i], main = colnames(dd3)[i], xlab="")
+}
+
+```
+
+
+
+##Imputation of missing data using the mice package
+
+```{r}
+library(tidyverse)
+library(GGally)
+#install.packages("mice") 
+#^ if not previously installed
+library(mice)
+
+
+
+
+dd3 <- read.csv("diabetes2.csv")
+
+dd3$Insulin <- ifelse(dd3$Insulin == 0, NA, dd3$Insulin)
+dd3$BloodPressure <- ifelse(dd3$BloodPressure == 0, NA, dd3$BloodPressure)
+dd3$SkinThickness <- ifelse(dd3$SkinThickness == 0, NA, dd3$SkinThickness)
+dd3$BMI <- ifelse(dd3$BMI == 0, NA, dd3$BMI)
+imp <- mice(dd3, m = 768, method = "pmm", maxit = 5) #Choosing number of iterations, and imputation type
+
+dd3_imputed <- complete(imp)
+```
+
+
+
+```{r}
+#Data Summaries
+#install.packages("GGally")
+summary(dd3_imputed)
+str(dd3_imputed)
+dd3_imputed$Outcome <- as.factor(dd3_imputed$Outcome)
+```
+```{r}
+# GGally package function ggpairs for scatter plot 
+dd3_imputed %>% ggpairs(.,
+                title = "Plot ", 
+                
+                lower = list(continuous = wrap("smooth", alpha = 0.3, size=0.2), 
+                             discrete = "blank", combo="blank"), 
+                diag = list(discrete="barDiag", 
+                            continuous = wrap("densityDiag", alpha=0.5 )), 
+                upper = list(combo = wrap("box_no_facet", alpha=0.5),
+                             continuous = wrap("cor", size= 2, alignPercent=0.8))
+                         )
+```
+
+
+
+```{r}
+#Histogram
+par(mfrow = c(3,3))
+for (i in 1:8){
+  hist(dd3_imputed[,i], main = colnames(dd3_imputed)[i], xlab="")
+}
+```
+
+## Selecting variables and model
+```{r}
+#Initial run using GLM function
+glm1 <- glm(Outcome~., data = dd3_imputed, family = binomial)
+glm1
+summary(glm1)
+AIC(glm1)
+
+```
+
+
+
+```{r}
+
+#Using step function to choose significant variables
+glm2 <- step(glm1)
+summary(glm2)
+AIC(glm2)
+```
+
+Pregnancies,Glucose, BMI,  DiabetesPedigreeFunction are highly significant predictor variables.
+
+
+```{r}
+
+# Just for reference (way to get pseudp Rsq using rcompanion pacakge for logistic regression, ways of checking model)
+pacman::p_load(rcompanion)
+nagelkerke(glm2)
+
+```
+
+
+```{r}
+#cross validation of logistic regression
+
+set.seed(999)
+n <- nrow(dd3_imputed); n
+floor(0.7*n)
+train <- sample(1:n, 537)
+glm_train <- glm(Outcome ~ Pregnancies + Glucose + BMI + DiabetesPedigreeFunction, 
+                  data = dd3_imputed,subset = train, family = binomial)
+summary(glm_train)
+```
+```{r}
+dd3_test <- dd3_imputed[-train, ]
+probs_test <- predict(glm_train, newdata = dd3_test,type = "response")
+length(probs_test)
+```
+
+
+```{r}
+
+# note that setting 0.5 value as threshold for model accuracy
+
+preds_test <- rep(0, 231)
+preds_test[probs_test > 0.5] <- 1
+head(probs_test)
+head(preds_test)
+```
+
+```{r}
+length(preds_test)
+length(dd3_test$Outcome)
+```
+```{r}
+# confusion matrix
+tb <- table(prediction = preds_test, actual = dd3_test$Outcome)
+addmargins(tb)
+```
+
+```{r}
+# Accuracy (percent correctly classified)
+(tb[1,1] + tb[2,2]) / 231
+```
+```{r}
+# Sensitivity (percent of diabetes outcome as Yes (1) correctly classified)
+tb[2,2] / 64
+```
+```{r}
+# Specificity (percent of diabetes outcome as No (0) correctly classified)
+tb[1,1] / 167
+```
+
+```{r}
+library(pROC)
+roc_obj <- roc(dd3_test$Outcome, probs_test)
+#Sensitivity/True Positive Rate: Correct prediction of diabetes. 
+#Specificity: False diabetes classified as true AKA False +
+plot(1 - roc_obj$specificities, roc_obj$sensitivities, type="l",
+xlab = "1 - Specificity", ylab = "Sensitivity", main = "ROC curve for Logistic Regression")
+# plot red point corresponding to 0.4 threshold:
+points(x = 34/167, y = 43/64, col="red", pch=19)
+abline(0, 1, lty=2) # 1-1 line
+```
+```{r}
+auc(roc_obj)
+```
+
+```{r}
+# Decision Trees Model
+
+pacman::p_load(rpart.plot)
+set.seed(100)
+indexSet <- sample(2, nrow(dd3_imputed), replace = T, prob = c(0.7, 0.3))
+dd3.train <- dd3_imputed[indexSet ==1 ,]
+dd3.test <- dd3_imputed[indexSet ==2 ,]
+
+
+classification_tree <- rpart(Outcome ~., data = dd3.train)
+classification_tree
+#Recursive Binary Splitting for the decision tree fit
+rpart.plot(classification_tree)
+
+
+```
+
+```{r}
+# Checking model accuracy based on training data 
+#train_prediction
+
+library(caret)
+
+train_prediction <- predict(classification_tree,data = dd3.train , type = "class")
+
+
+
+#confusion Matrix
+tab2 <- table(predicted = train_prediction, Actual = dd3.train$Outcome)
+tab2
+
+
+confusionMatrix(tab2)
+```
+
+
+```{r}
+# Cross Validation using Testing data 
+test_prediction <- predict(classification_tree,newdata =dd3.test , type = "class")
+
+tab3 <- table(predicted = test_prediction, Actual = dd3.test$Outcome)
+
+confusionMatrix(tab3)
+
+
+```
+
+```{r}
+# Response must be numeric. So used following formula with type ="prob". 
+tree.preds <- predict(classification_tree, dd3.test, type="prob")[, 2]
+
+# ROC curve for decision trees 
+library(pROC)
+roc_obj1 <- roc(dd3.test$Outcome, tree.preds)
+plot(1 - roc_obj1$specificities, roc_obj1$sensitivities, type="l",
+xlab = "1 - Specificity", ylab = "Sensitivity",main = "ROC curve for Decision Trees")
+# plot red point corresponding to 0.5 threshold:
+ points(x = 20/154, y = 54/83, col="red", pch=19)
+abline(0, 1, lty=2) # 1-1 line
+```
+```{r}
+# AUC for Decision Tree
+auc(roc_obj1)
+```
+
+
+```{r}
+# Random Forests Model 
+
+#data Partition
+set.seed(123)
+indexSet <- sample(2, nrow(dd3_imputed), replace = T, prob = c(0.7, 0.3))
+rf.train <- dd3_imputed[indexSet ==1 ,]
+rf.test <- dd3_imputed[indexSet ==2 ,]
+
+#Random Forest
+library(randomForest)
+ set.seed(222) 
+ rf2 <- randomForest(Outcome ~  ., data=rf.train, ntree =200, mtry = 4, 
+                     importance = T, proximity = T)
+ rf2
+```
+```{r}
+attributes(rf2)
+```
+```{r}
+
+# Checking model accuracy based on training data 
+library(caret)
+p1 <- predict(rf2, rf.train)
+#confusion matrix
+confusionMatrix(p1,rf.train$Outcome)
+```
+
+
+```{r}
+# Cross Validation using Test data for RF 
+p2 <- predict(rf2, rf.test)
+confusionMatrix(p2,rf.test$Outcome)
+```
+
+```{r}
+# Error Rate in RF  model 
+plot(rf2)
+
+# the OOB error becomes reduces at no. of trees = 250 and thereafter increases.
+#Initially there were default trees in random forest i.e 300. While tuning model 200 trees provided good accuracy . so following result has 200 trees  
+```
+```{r}
+# Tuning RF model (mtry)
+t <- tuneRF(rf.train[,-9], rf.train[,9], 
+      stepFactor = 0.4,
+      plot = T,
+      ntreeTry = 200,
+      trace = T,
+      improve = 0.05)
+
+
+#Setting mtry = 4, no of trees = 200 in rf2 . Line 239
+```
+
+```{r}
+# number of nodes in trees. Distribution of no. of nodes in each tree
+hist(treesize(rf2), main ="No. of nodes in the trees", col = "blue")
+
+```
+```{r}
+# important variable 
+varImpPlot(rf2, sort = T )
+
+# First graph tells how worse the model performs without each variable.
+# Second graph measures how pure the nodes are at the end of the tree without each variable. 
+```
+
+```{r}
+# How oftern the predictor variables have occurred in the forest
+varUsed(rf2)
+```
+
+```{r}
+# ROC and AUC
+rf_preds1 <- predict(rf2, rf.test, type="prob")[, 2]
+#rf_preds1 <- predict(rf2, type = "response")
+library(pROC)
+roc_obj2 <- roc(rf.test$Outcome, rf_preds1)
+plot(1 - roc_obj1$specificities, roc_obj1$sensitivities, type="l",
+xlab = "1 - Specificity", ylab = "Sensitivity", main = "ROC for Random Forests")
+# plot red point corresponding to 0.5 threshold:
+ points(x = 17/145, y = 46/84, col="red", pch=19)
+abline(0, 1, lty=2) # 1-1 line
+```
+```{r}
+auc(roc_obj2)
+```
+
