@@ -1,3 +1,4 @@
+![image](https://github.com/Niharika-Patil9/Diabetes-Prediction-Using-Machine-Learning/assets/103222259/8157a6d0-8d82-43b4-894f-53cd2125c891)
 
 # Diabetes Prediction using Machine Learning
 Diabetes is a prevalent chronic disease that affects millions of people worldwide. Early detection and intervention are crucial in managing the condition and
